@@ -1,0 +1,11 @@
+.venv*/
+__pycache__/
+*.pyc
+.env
+dados/*.xls
+dados/*.csv
+dados/*.bib
+.pytest_cache/
+dados/*.xlsx
+dados/*.json
+config/revisoes.json

@@ -1,0 +1,54 @@
+{
+  "A": {
+    "nome": "Aprendizado federado em dispositivos de borda",
+    "criterio_de_aceite": "ETAPA 1 - Estudo trata de aprendizado federado",
+    "termos_dominio": [
+      "federated learning",
+      "federated training",
+      "federated optimization",
+      "federated averaging",
+      "fedavg"
+    ],
+    "siglas_ambiguas": [
+      "fl"
+    ],
+    "termos_colisao": [
+      "fuzzy",
+      "membership function",
+      "fuzzy inference"
+    ],
+    "termos_recorte": [
+      "edge device",
+      "edge devices",
+      "edge computing",
+      "internet of things",
+      "iot"
+    ]
+  },
+  "B": {
+    "nome": "Aprendizado federado em saúde",
+    "criterio_de_aceite": "ETAPA 1 - Estudo trata de aprendizado federado",
+    "termos_dominio": [
+      "federated learning",
+      "federated training",
+      "federated optimization",
+      "federated averaging",
+      "fedavg"
+    ],
+    "siglas_ambiguas": [
+      "fl"
+    ],
+    "termos_colisao": [
+      "fuzzy",
+      "membership function",
+      "fuzzy inference"
+    ],
+    "termos_recorte": [
+      "healthcare",
+      "medical",
+      "clinical",
+      "hospital",
+      "electronic health records"
+    ]
+  }
+}
