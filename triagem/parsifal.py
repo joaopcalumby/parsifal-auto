@@ -17,8 +17,20 @@ from urllib.parse import urlparse
 
 import requests
 from bs4 import BeautifulSoup
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 
 TEMPO_LIMITE = 60
+
+# Uma varredura faz uma requisição por artigo, e uma queda isolada de conexão não pode derrubá-la.
+# Só o GET é repetido: o POST grava, e repeti-lo sem saber se o primeiro chegou é escrever às cegas.
+REPETICOES = Retry(
+    total=5,
+    backoff_factor=1,
+    status_forcelist=(429, 500, 502, 503, 504),
+    allowed_methods=frozenset({"GET"}),
+    raise_on_status=False,
+)
 RAIZ_PADRAO = "https://parsif.al"
 
 ACEITO = "A"
@@ -159,6 +171,8 @@ class ClienteParsifal:
         partes = urlparse(self.base)
         self.raiz = f"{partes.scheme}://{partes.netloc}" if partes.netloc else RAIZ_PADRAO
         self.sessao = requests.Session()
+        self.sessao.mount("https://", HTTPAdapter(max_retries=REPETICOES))
+        self.sessao.mount("http://", HTTPAdapter(max_retries=REPETICOES))
         self._id_da_revisao = ""
 
         if acesso.sessionid:

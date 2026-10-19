@@ -4,11 +4,16 @@ A marcação depende de duas leituras: os campos do formulário do artigo (que p
 inteiros no POST, senão o metadado é apagado) e o mapa de critério para id.
 """
 
+import threading
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
 import pytest
+import requests
 
 from triagem.parsifal import (
     ACEITO,
     Acesso,
+    ClienteParsifal,
     ErroDeSessao,
     artigos_do_html,
     campos_do_formulario,
@@ -153,3 +158,53 @@ class TestAcesso:
 
     def test_aceita_cookie_de_sessao(self):
         Acesso(url_da_revisao="https://parsif.al/usuario/revisao", sessionid="abc").validar()
+
+
+class _ServidorQueCaiNaPrimeira(BaseHTTPRequestHandler):
+    """Fecha a conexão sem responder na primeira requisição, como o Parsifal fez num lote real."""
+
+    requisicoes: list[str] = []
+
+    def _responder(self) -> None:
+        self.requisicoes.append(self.command)
+        if len(self.requisicoes) == 1:
+            self.close_connection = True
+            return
+        self.send_response(200)
+        self.send_header("Content-Length", "2")
+        self.end_headers()
+        self.wfile.write(b"ok")
+
+    do_GET = _responder
+    do_POST = _responder
+
+    def log_message(self, *_argumentos) -> None:
+        pass
+
+
+@pytest.fixture
+def servidor_instavel():
+    _ServidorQueCaiNaPrimeira.requisicoes = []
+    servidor = ThreadingHTTPServer(("127.0.0.1", 0), _ServidorQueCaiNaPrimeira)
+    threading.Thread(target=servidor.serve_forever, daemon=True).start()
+    yield f"http://127.0.0.1:{servidor.server_port}"
+    servidor.shutdown()
+    servidor.server_close()
+
+
+class TestQuedaDeConexao:
+    """Uma varredura faz milhares de GETs, e uma queda isolada não pode derrubar todas."""
+
+    def _cliente(self, raiz):
+        return ClienteParsifal(Acesso(url_da_revisao=f"{raiz}/usuario/revisao", sessionid="abc"))
+
+    def test_get_e_repetido_depois_de_uma_queda(self, servidor_instavel):
+        resposta = self._cliente(servidor_instavel).sessao.get(servidor_instavel, timeout=5)
+        assert resposta.text == "ok"
+        assert _ServidorQueCaiNaPrimeira.requisicoes == ["GET", "GET"]
+
+    def test_post_nao_e_repetido(self, servidor_instavel):
+        """O POST grava no Parsifal: repetir sem saber se o primeiro chegou é escrever às cegas."""
+        with pytest.raises(requests.ConnectionError):
+            self._cliente(servidor_instavel).sessao.post(servidor_instavel, data={"x": "1"}, timeout=5)
+        assert _ServidorQueCaiNaPrimeira.requisicoes == ["POST"]

@@ -1,106 +1,74 @@
-"""Regras da ETAPA 1: a automação sinaliza, o revisor decide.
+"""Regras da ETAPA 1: a string de busca decide, o revisor confere.
 
-A ETAPA 1 lê **título, palavras-chave e resumo**. É o campo lido que define a etapa, não quem
-decide: por isso sobraram aqui só as três exclusões que se reconhecem pelo próprio vocabulário do
-texto (estudo secundário, literatura cinza, fora do domínio).
-
-Estudo secundário e literatura cinza valem para qualquer tema e moram aqui. O vocabulário do
-domínio e do recorte é de cada revisão e vem do `config/revisoes.json`, como um `Vocabulario`.
+A ETAPA 1 lê **título, palavras-chave e resumo**, os mesmos três campos em que a busca rodou nas
+bases. A regra é uma só: o estudo que atende à string nesses campos é aceito, o que tem resumo e não
+atende é rejeitado, e o que não tem resumo nem atende vai para conferência manual, porque ali "não
+atende" mediria a lacuna do registro, não o artigo.
 
 Idioma e páginas são calculados, mas viram **nota para a ETAPA 2**, fora da decisão desta etapa:
 os dois só se confirmam com o arquivo aberto.
-
-Nenhuma regra aqui exclui estudo.
 """
 
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass, field
 
 from langdetect import DetectorFactory, detect_langs
 from langdetect.lang_detect_exception import LangDetectException
 
+from triagem.planilha import ACEITAR, REJEITAR
+from triagem.string_de_busca import ErroNaString, StringDeBusca
+
 # langdetect é probabilístico e varia entre execuções sem semente fixa.
 DetectorFactory.seed = 0
 
-SINALIZAR = "SINALIZAR"
-MANTER = "MANTER"
-SEM_RESUMO = "SEM_RESUMO"
+MANUAL = "manual"
 
 CRITERIO_IDIOMA = "ETAPA 2 - Estudo em idioma distinto do inglês"
 CRITERIO_SHORT_PAPER = "ETAPA 2 - Short-paper: estudo com menos de 5 páginas"
-CRITERIO_SECUNDARIO = "ETAPA 1 - Estudo secundário (revisão, survey ou mapeamento sistemático)"
-CRITERIO_CINZA = (
-    "ETAPA 1 - Literatura cinza (preprint não publicado, relatório técnico, tese não indexada)"
-)
-CRITERIO_DOMINIO = "ETAPA 1 - Estudo fora do domínio da revisão"
-CRITERIO_RECORTE = "ETAPA 1 - Título, resumo ou palavras-chave indicam o recorte da revisão"
 
 MINIMO_DE_PAGINAS = 5
 CONFIANCA_MINIMA_DE_IDIOMA = 0.90
 CARACTERES_MINIMOS_PARA_DETECTAR_IDIOMA = 80
 
-TERMOS_ESTUDO_SECUNDARIO = (
-    "systematic review",
-    "systematic literature review",
-    "systematic mapping",
-    "mapping study",
-    "literature review",
-    "state of the art",
-    "state-of-the-art review",
-    "a survey",
-    "survey of",
-    "survey on",
-    "review of the literature",
-)
+CHAVES_OBRIGATORIAS = ("string", "criterio_de_aceite", "criterio_de_rejeicao")
 
-TERMOS_LITERATURA_CINZA = (
-    "arxiv",
-    "preprint",
-    "technical report",
-    "tech report",
-    "working paper",
-    "master's thesis",
-    "phd thesis",
-    "dissertation",
-    "biorxiv",
-)
 
 @dataclass(frozen=True)
-class Vocabulario:
-    """O vocabulário de uma revisão, lido do `config/revisoes.json`.
+class Revisao:
+    """Um bloco do `config/revisoes.json`: a string e o critério anexado a cada decisão."""
 
-    `dominio` são os termos que, sozinhos, provam que o estudo é do tema. `siglas_ambiguas` são
-    siglas do tema que também nomeiam outra coisa: contam como termo do tema, mas não como prova,
-    porque é justamente quando a sigla é a única marca do tema que o estudo precisa ser olhado.
-    `colisao` é o vocabulário da outra área com que a sigla colide. `recorte` são os termos que
-    delimitam a revisão dentro do tema.
-
-    Lista vazia desliga o sinal correspondente.
-    """
-
-    dominio: tuple[str, ...] = ()
-    siglas_ambiguas: tuple[str, ...] = ()
-    colisao: tuple[str, ...] = ()
-    recorte: tuple[str, ...] = ()
+    nome: str
+    string: StringDeBusca
+    criterio_de_aceite: str
+    criterio_de_rejeicao: str
 
     @classmethod
-    def da_revisao(cls, revisao: dict) -> Vocabulario:
-        def termos(chave: str) -> tuple[str, ...]:
-            return tuple(termo.lower() for termo in revisao.get(chave, ()))
+    def do_config(cls, bloco: dict) -> Revisao:
+        faltando = [chave for chave in CHAVES_OBRIGATORIAS if not str(bloco.get(chave) or "").strip()]
+        if faltando:
+            raise ValueError(f"falta no bloco da revisão: {', '.join(faltando)}")
+
+        try:
+            string = StringDeBusca(bloco["string"])
+        except ErroNaString as erro:
+            raise ValueError(f"string: {erro}") from erro
 
         return cls(
-            dominio=termos("termos_dominio"),
-            siglas_ambiguas=termos("siglas_ambiguas"),
-            colisao=termos("termos_colisao"),
-            recorte=termos("termos_recorte"),
+            nome=str(bloco.get("nome", "")),
+            string=string,
+            criterio_de_aceite=bloco["criterio_de_aceite"].strip(),
+            criterio_de_rejeicao=bloco["criterio_de_rejeicao"].strip(),
         )
+
+    def criterio_de(self, acao: str) -> str:
+        """O critério que vai junto da decisão da automação. Conferência manual não tem critério."""
+        return {ACEITAR: self.criterio_de_aceite, REJEITAR: self.criterio_de_rejeicao}.get(acao, "")
 
 
 @dataclass(frozen=True)
 class Sinal:
-    """Motivo pelo qual um estudo merece olhar humano, sem decidir por ele."""
+    """Algo que a automação já sabe sobre o estudo e que só se decide na ETAPA 2."""
 
     criterio: str
     evidencia: str
@@ -108,30 +76,15 @@ class Sinal:
 
 @dataclass
 class Decisao:
-    """Resultado da ETAPA 1 para um estudo.
-
-    `sinais` é o que se decide nesta etapa. `notas` é o que já se sabe e só será decidido na ETAPA 2,
-    separado para não competir com a leitura de agora.
-    """
+    """Resultado da ETAPA 1 para um estudo: a ação, a evidência da string e as notas da ETAPA 2."""
 
     acao: str
-    criterio: str = ""
-    motivo: str = ""
-    sinais: list[Sinal] = field(default_factory=list)
+    evidencia: str
     notas: list[Sinal] = field(default_factory=list)
-    recorte_em: str = ""
-
-    @property
-    def sinais_em_texto(self) -> str:
-        return _em_texto(self.sinais)
 
     @property
     def notas_em_texto(self) -> str:
-        return _em_texto(self.notas)
-
-
-def _em_texto(sinais: list[Sinal]) -> str:
-    return " | ".join(f"{sinal.criterio.split(' - ')[-1]}: {sinal.evidencia}" for sinal in sinais)
+        return " | ".join(f"{nota.criterio.split(' - ')[-1]}: {nota.evidencia}" for nota in self.notas)
 
 
 def contar_paginas(intervalo: str | None) -> int | None:
@@ -194,55 +147,6 @@ def sinal_de_idioma(titulo: str, resumo: str = "") -> Sinal | None:
     return Sinal(CRITERIO_IDIOMA, f"detectado {provavel.lang} (p={provavel.prob:.2f})")
 
 
-def _encontrar(termos: tuple[str, ...], texto: str) -> list[str]:
-    """Casa termo inteiro, não pedaço de palavra: uma sigla não pode casar dentro de outra palavra."""
-    return [termo for termo in termos if re.search(rf"\b{re.escape(termo)}\b", texto)]
-
-
-def _normalizar(*campos: str | None) -> str:
-    return re.sub(r"\s+", " ", " ".join(campo or "" for campo in campos)).lower()
-
-
-def levantar_sinais(
-    titulo: str,
-    resumo: str,
-    palavras_chave: str,
-    fonte: str,
-    vocabulario: Vocabulario,
-) -> list[Sinal]:
-    """As três exclusões e as duas inclusões que a ETAPA 1 decide, sobre os três campos dela.
-
-    Palavras-chave entram na leitura porque a busca costuma rodar em `TITLE-ABS-KEY`: sem elas a
-    automação enxergaria menos que a própria busca enxergou, e "termo ausente" mediria a pobreza do
-    export.
-    """
-    texto = _normalizar(titulo, resumo, palavras_chave)
-    texto_com_fonte = _normalizar(titulo, resumo, palavras_chave, fonte)
-    sinais: list[Sinal] = []
-
-    secundarios = _encontrar(TERMOS_ESTUDO_SECUNDARIO, texto)
-    if secundarios:
-        sinais.append(Sinal(CRITERIO_SECUNDARIO, ", ".join(secundarios)))
-
-    cinza = _encontrar(TERMOS_LITERATURA_CINZA, texto_com_fonte)
-    if cinza:
-        sinais.append(Sinal(CRITERIO_CINZA, ", ".join(cinza)))
-
-    prova_do_dominio = _encontrar(vocabulario.dominio, texto)
-    colisao = _encontrar(vocabulario.colisao, texto)
-    if colisao and not prova_do_dominio:
-        sinais.append(Sinal(CRITERIO_DOMINIO, ", ".join(colisao)))
-
-    termos_do_dominio = vocabulario.dominio + vocabulario.siglas_ambiguas
-    if termos_do_dominio and not _encontrar(termos_do_dominio, texto):
-        sinais.append(Sinal(CRITERIO_DOMINIO, "nenhum termo do domínio nos três campos"))
-
-    if vocabulario.recorte and not _encontrar(vocabulario.recorte, texto):
-        sinais.append(Sinal(CRITERIO_RECORTE, "nenhum termo do recorte nos três campos"))
-
-    return sinais
-
-
 def sinal_de_idioma_declarado(idioma: str) -> Sinal | None:
     """Usa o campo `language` do registro, quando ele existe.
 
@@ -254,53 +158,6 @@ def sinal_de_idioma_declarado(idioma: str) -> Sinal | None:
         return None
 
     return Sinal(CRITERIO_IDIOMA, f"registro declara idioma {declarado}")
-
-
-def _contar_mencoes(termos: tuple[str, ...], texto: str) -> int:
-    """Conta menções, não casamentos de termo.
-
-    Sinônimos do mesmo recorte se sobrepõem: "edge device level" casa com `edge device` e com
-    `device level`, e é uma menção só. Contar duas inflaria justamente o número que separa menção de
-    foco.
-    """
-    trechos = sorted(
-        (achado.span() for termo in termos for achado in re.finditer(rf"\b{re.escape(termo)}\b", texto)),
-    )
-
-    mencoes, fim_anterior = 0, -1
-    for inicio, fim in trechos:
-        if inicio >= fim_anterior:
-            mencoes += 1
-        fim_anterior = max(fim_anterior, fim)
-
-    return mencoes
-
-
-def localizacao_do_recorte(
-    titulo: str,
-    resumo: str,
-    palavras_chave: str,
-    termos_recorte: tuple[str, ...] | list[str],
-) -> str:
-    """Onde o termo do recorte aparece, e quantas vezes no resumo.
-
-    Não decide nada: é ordenação para a ETAPA 2, onde costuma pesar "o recorte é o foco declarado
-    ou só mencionado". Recorte no título é indício forte de foco; uma aparição solta no resumo é
-    indício de menção.
-    """
-    termos = tuple(termos_recorte)
-    onde = []
-
-    if _encontrar(termos, _normalizar(titulo)):
-        onde.append("título")
-    if _encontrar(termos, _normalizar(palavras_chave)):
-        onde.append("palavras-chave")
-
-    ocorrencias = _contar_mencoes(termos, _normalizar(resumo))
-    if ocorrencias:
-        onde.append(f"resumo ({ocorrencias}x)")
-
-    return ", ".join(onde) if onde else "ausente"
 
 
 def levantar_notas_da_etapa_2(
@@ -322,37 +179,19 @@ def triar(
     titulo: str,
     resumo: str,
     palavras_chave: str,
-    fonte: str,
     paginas: str | None,
-    vocabulario: Vocabulario,
+    revisao: Revisao,
     idioma_declarado: str = "",
 ) -> Decisao:
-    """Aplica a ETAPA 1 a um estudo.
-
-    Três resultados possíveis, e nenhum deles exclui: passa limpo, volta com sinais para o revisor olhar,
-    ou não é decidível aqui por não ter resumo.
-    """
+    """Aplica a ETAPA 1 a um estudo: a string decide, as notas vão junto."""
+    resultado = revisao.string.avaliar(titulo, resumo, palavras_chave)
     notas = levantar_notas_da_etapa_2(titulo, resumo, paginas, idioma_declarado)
-    recorte_em = localizacao_do_recorte(titulo, resumo, palavras_chave, vocabulario.recorte)
 
-    if not (resumo or "").strip():
-        return Decisao(
-            acao=SEM_RESUMO,
-            motivo="registro sem resumo: a ETAPA 1 não decide, segue para a ETAPA 2",
-            notas=notas,
-            recorte_em=recorte_em,
-        )
+    if resultado.atende:
+        acao = ACEITAR
+    elif (resumo or "").strip():
+        acao = REJEITAR
+    else:
+        acao = MANUAL
 
-    sinais = levantar_sinais(titulo, resumo, palavras_chave, fonte, vocabulario)
-    if sinais:
-        return Decisao(
-            acao=SINALIZAR,
-            motivo="requer decisão humana",
-            sinais=sinais,
-            notas=notas,
-            recorte_em=recorte_em,
-        )
-
-    return Decisao(
-        acao=MANTER, motivo="passa na ETAPA 1 sem ressalva", notas=notas, recorte_em=recorte_em
-    )
+    return Decisao(acao=acao, evidencia=resultado.evidencia, notas=notas)

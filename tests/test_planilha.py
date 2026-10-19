@@ -2,27 +2,28 @@
 
 from triagem import planilha
 
+ACEITE = "ETAPA 1 - Atende à string de busca em título, resumo ou palavras-chave"
+REJEICAO = "ETAPA 1 - Não atende à string de busca em título, resumo ou palavras-chave"
+
 LINHAS = [
     {
         "id": "55403348",
         "acao": "aceitar",
-        "criterio": "ETAPA 1 - Estudo trata de aprendizado federado",
+        "criterio": ACEITE,
         "titulo": "Federated learning on edge devices",
-        "sugestao": "MANTER",
-        "sinais": "",
+        "automacao": "aceitar",
+        "evidencia": "G1: federated learning | G2: edge device",
         "notas_etapa_2": "Short-paper: metadado indica 3 páginas",
-        "recorte_em": "título, resumo (2x)",
         "doi": "10.1000/exemplo",
     },
     {
         "id": "55403335",
         "acao": "",
         "criterio": "",
-        "titulo": "An FL controller for IoT irrigation",
-        "sugestao": "SINALIZAR",
-        "sinais": "Estudo fora do domínio da revisão: fuzzy, membership function",
+        "titulo": "Federated learning in the cloud",
+        "automacao": "manual",
+        "evidencia": "G1: federated learning | G2: nenhum termo",
         "notas_etapa_2": "",
-        "recorte_em": "ausente",
         "doi": "",
     },
 ]
@@ -57,7 +58,7 @@ class TestIdaEVolta:
 
         anteriores = {linha["id"]: linha for linha in planilha.ler(caminho)}
         recalculadas = [
-            {**linha, "sinais": "recalculado", "acao": "", "criterio": ""} for linha in LINHAS
+            {**linha, "evidencia": "recalculado", "acao": "", "criterio": ""} for linha in LINHAS
         ]
         preservadas = [
             {
@@ -71,4 +72,28 @@ class TestIdaEVolta:
 
         lidas = {linha["id"]: linha for linha in planilha.ler(caminho)}
         assert lidas["55403348"]["acao"] == "aceitar"
-        assert lidas["55403348"]["sinais"] == "recalculado"
+        assert lidas["55403348"]["evidencia"] == "recalculado"
+
+
+class TestFoiEditada:
+    """A automação preenche a ação. Só o que o revisor mudou sobrevive a um novo `classificar`."""
+
+    def test_linha_como_a_automacao_deixou_nao_foi_editada(self):
+        anterior = {"acao": "rejeitar", "criterio": REJEICAO, "automacao": "rejeitar"}
+        assert not planilha.foi_editada(anterior, ("rejeitar", REJEICAO))
+
+    def test_acao_trocada_pelo_revisor_foi_editada(self):
+        anterior = {"acao": "aceitar", "criterio": REJEICAO, "automacao": "rejeitar"}
+        assert planilha.foi_editada(anterior, ("rejeitar", REJEICAO))
+
+    def test_criterio_trocado_pelo_revisor_foi_editada(self):
+        anterior = {"acao": "rejeitar", "criterio": "ETAPA 1 - Preprint", "automacao": "rejeitar"}
+        assert planilha.foi_editada(anterior, ("rejeitar", REJEICAO))
+
+    def test_conferencia_manual_preenchida_pelo_revisor_foi_editada(self):
+        anterior = {"acao": "aceitar", "criterio": ACEITE, "automacao": "manual"}
+        assert planilha.foi_editada(anterior, ("", ""))
+
+    def test_espaco_sobrando_nao_conta_como_edicao(self):
+        anterior = {"acao": " rejeitar ", "criterio": REJEICAO + " ", "automacao": "rejeitar"}
+        assert not planilha.foi_editada(anterior, ("rejeitar", REJEICAO))

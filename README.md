@@ -1,20 +1,32 @@
 # parsifal-auto
 
 Ferramenta de linha de comando para a triagem de estudos de revisões sistemáticas feitas no
-[Parsifal](https://parsif.al). Serve para qualquer tema: o vocabulário da revisão fica num arquivo de
-configuração, não no código.
+[Parsifal](https://parsif.al). Serve para qualquer tema: a regra da triagem é a própria string de
+busca da revisão, colada num arquivo de configuração.
 
 A ferramenta supõe uma seleção em três etapas, e os critérios cadastrados no Parsifal seguem esse
 prefixo (`ETAPA 1 - ...`, `ETAPA 2 - ...`):
 
-| Etapa | O que se lê | Quem decide |
-|---|---|---|
-| ETAPA 1 | título, palavras-chave e resumo | você, com apoio desta ferramenta |
-| ETAPA 2 | introdução e resumo | você, à mão |
-| ETAPA 3 | texto completo | você, à mão |
+| Etapa | O que se lê | Quem decide | Critérios |
+|---|---|---|---|
+| ETAPA 1 | título, palavras-chave e resumo | a string de busca, com conferência sua | só os dois da string: atende e não atende |
+| ETAPA 2 | introdução e resumo | você, à mão | todo critério de conteúdo: tema, tipo de estudo, preprint, idioma, páginas... |
+| ETAPA 3 | texto completo | você, à mão | o que só se decide com o artigo inteiro aberto |
 
-A ferramenta só atua na ETAPA 1. Ela lê os estudos importados na revisão, aponta quais merecem
-atenção e por quê, e depois marca no Parsifal como aceito ou rejeitado **o que você decidiu**, com o
+Como a ETAPA 1 é a string, ela tem **só dois critérios**:
+
+```
+ETAPA 1 - Atende à string de busca em título, resumo ou palavras-chave      (inclusão)
+ETAPA 1 - Não atende à string de busca em título, resumo ou palavras-chave  (exclusão)
+```
+
+Qualquer outro critério pede leitura e julgamento (o estudo trata do tema? é secundário? é
+preprint?) e por isso mora na ETAPA 2 ou 3, mesmo que se possa decidir lendo só o resumo. Assim cada
+estudo excluído na ETAPA 1 saiu pela string, e só por ela, o que é fácil de descrever no método.
+
+A ferramenta só atua na ETAPA 1. Ela lê os estudos importados na revisão, verifica se cada um atende
+à string de busca nos mesmos três campos em que a busca rodou nas bases, entrega uma planilha com a
+decisão já preenchida e, depois da sua conferência, marca no Parsifal como aceito ou rejeitado, com o
 critério anexado. É o mesmo que você faria abrindo artigo por artigo e clicando.
 
 ## Requisitos
@@ -22,6 +34,9 @@ critério anexado. É o mesmo que você faria abrindo artigo por artigo e clican
 - **Python 3.13.** É a versão em que o projeto foi desenvolvido e em que os testes passam.
 - Uma conta no Parsifal com acesso à revisão a triar: dona da revisão ou colaboradora dela.
 - Os estudos já importados na revisão (aba *Conducting > Import Studies* do Parsifal).
+- Os dois critérios de ETAPA 1 cadastrados no Parsifal (*Planning > Selection Criteria*), com o
+  texto exato que está no config, para a automação anexar às decisões dela. Cadastre **antes** de
+  aplicar qualquer decisão: ver [Cuidados com os critérios](#cuidados-com-os-critérios).
 
 ## Instalação
 
@@ -71,8 +86,8 @@ O `.env` está no `.gitignore` e não sai da máquina.
 
 ### A revisão no `config/revisoes.json`
 
-Copie `config/revisoes.exemplo.json` para `config/revisoes.json` e descreva nele a sua revisão. Como o
-`.env`, o `revisoes.json` está no `.gitignore`: o repositório traz só o exemplo.
+Copie `config/revisoes.exemplo.json` para `config/revisoes.json` e cole nele a string da sua revisão.
+Como o `.env`, o `revisoes.json` está no `.gitignore`: o repositório traz só o exemplo.
 
 Cada revisão é um bloco identificado por uma sigla (`A`, `B`...). O exemplo usa um tema fictício,
 aprendizado federado em dispositivos de borda:
@@ -80,27 +95,21 @@ aprendizado federado em dispositivos de borda:
 ```json
 "A": {
   "nome": "Aprendizado federado em dispositivos de borda",
-  "criterio_de_aceite": "ETAPA 1 - Estudo trata de aprendizado federado",
-  "termos_dominio": ["federated learning", "federated training", "fedavg"],
-  "siglas_ambiguas": ["fl"],
-  "termos_colisao": ["fuzzy", "membership function"],
-  "termos_recorte": ["edge device", "edge devices", "iot"]
+  "string": "(\"federated learning\" OR FedAvg) AND (\"edge device\" OR IoT)",
+  "criterio_de_aceite": "ETAPA 1 - Atende à string de busca em título, resumo ou palavras-chave",
+  "criterio_de_rejeicao": "ETAPA 1 - Não atende à string de busca em título, resumo ou palavras-chave"
 }
 ```
 
 | Chave | O que é |
 |---|---|
 | `nome` | só para exibição |
-| `criterio_de_aceite` | critério usado quando você aceita sem escrever critério. Precisa ser o texto exato de um critério de inclusão cadastrado no Parsifal |
-| `termos_dominio` | termos que, sozinhos, provam que o estudo é do tema |
-| `siglas_ambiguas` | siglas do tema que também nomeiam outra coisa. Contam como termo do tema, mas não como prova |
-| `termos_colisao` | vocabulário da área com que a sigla colide |
-| `termos_recorte` | termos que delimitam a revisão dentro do tema (população, contexto, nível) |
+| `string` | a string de busca, exatamente como foi colada nas bases. No JSON, as aspas internas levam `\` antes |
+| `criterio_de_aceite` | critério anexado quando a automação aceita. Texto exato de um critério de inclusão cadastrado no Parsifal |
+| `criterio_de_rejeicao` | critério anexado quando a automação rejeita. Texto exato de um critério de exclusão cadastrado no Parsifal |
 
-Os termos são em inglês, como os resumos, e casam como palavra inteira, sem diferenciar maiúscula.
-**Todas as chaves de termos são opcionais**: lista vazia ou ausente desliga o sinal correspondente.
-Vale repetir os mesmos termos de domínio em vários blocos quando as revisões são do mesmo tema e
-mudam só no recorte, como os blocos `A` e `B` do exemplo.
+As três últimas chaves são obrigatórias. Se um critério não estiver cadastrado no Parsifal, o
+`classificar` avisa, e o `aplicar` recusa a linha em vez de gravar sem critério.
 
 **A revisão é escolhida em dois lugares, e os dois precisam concordar:**
 
@@ -110,7 +119,8 @@ mudam só no recorte, como os blocos `A` e `B` do exemplo.
 | `--revisao` na linha de comando | qual bloco do `config/revisoes.json` vale | `classificar`, `aplicar` |
 
 Se o `.env` aponta para a revisão B e o comando diz `--revisao A`, a automação baixa os estudos da
-revisão B e procura neles os termos de recorte da A. Nada avisa: a planilha sai coerente e errada. O `--revisao` tem `A` como padrão, então esquecê-lo também não dá erro.
+revisão B e aplica neles a string da A. Nada avisa: a planilha sai coerente e errada. O `--revisao`
+tem `A` como padrão, então esquecê-lo também não dá erro.
 
 ## Uso
 
@@ -120,8 +130,8 @@ Com o ambiente ativado, da raiz do repositório:
 python -m triagem verificar                # sonda a revisão, não escreve nada
 python -m triagem baixar                   # copia os estudos para dados/estudos.csv
 python -m triagem completar                # busca fora o resumo que o Parsifal não tem
-python -m triagem classificar --revisao A  # gera dados/decisoes.xlsx
-#   abra a planilha e decida: 'aceitar' ou 'rejeitar' na coluna 'acao'
+python -m triagem classificar --revisao A  # gera dados/decisoes.xlsx com a decisão preenchida
+#   abra a planilha, confira e mude o que discordar
 python -m triagem aplicar --revisao A              # simulação: mostra o que seria escrito
 python -m triagem aplicar --revisao A --confirmar  # grava no Parsifal
 ```
@@ -131,7 +141,7 @@ você quer.
 
 > **A escrita no Parsifal ainda não foi testada ao vivo.** Leitura e login foram verificados contra
 > uma revisão real, mas nenhum `aplicar --confirmar` foi enviado até agora. Na primeira vez, deixe
-> só **uma** linha preenchida na coluna `acao`, rode `aplicar --confirmar` e confira na tela do
+> só **uma** linha com a coluna `acao` preenchida, rode `aplicar --confirmar` e confira na tela do
 > Parsifal se o status e o critério entraram e se o resto do artigo (resumo, autores, DOI) continua
 > intacto. Só depois aplique o resto.
 
@@ -139,8 +149,10 @@ Detalhes de cada comando:
 
 - **`baixar`** faz uma requisição por artigo e demora. A instância hospedada do Parsifal não tem
   export: resumo e palavras-chave só existem na tela de cada artigo. Só os artigos ainda
-  `Unclassified` são baixados. Use `--limite N` para testar com poucos e `--pausa` para ajustar o
+  `Unclassified` são baixados. Queda de conexão ou erro passageiro do servidor é repetido até cinco
+  vezes, com espera crescente. Use `--limite N` para testar com poucos e `--pausa` para ajustar o
   intervalo entre requisições (padrão 0,3 s).
+- **`completar`** procura, pelo DOI ou pelo link, o resumo dos estudos que chegaram sem ele.
 - **`classificar`** ignora estudo que já tem status no Parsifal, então rodar duas vezes não desfaz
   trabalho. Aceita `--entrada` para ler um `.csv` ou `.bib` no lugar de `dados/estudos.csv`.
 - **`aplicar`** sem `--confirmar` nunca escreve.
@@ -150,128 +162,146 @@ Todos os comandos aceitam `--help`.
 ### Antes de trocar de revisão
 
 A pasta `dados/` é uma só para todas as revisões: `baixar` sobrescreve o `estudos.csv`, e
-`classificar` remonta o `decisoes.xlsx` só com os estudos da revisão nova. **Decisão escrita na
+`classificar` remonta o `decisoes.xlsx` só com os estudos da revisão nova. **Conferência feita na
 planilha e ainda não aplicada some.** Rode `aplicar --confirmar` antes da troca, ou copie a pasta
 (por exemplo, para `dados-A/`).
 
 Para trocar: edite `PARSIFAL_REVIEW_URL` no `.env`, rode `verificar` e use a sigla certa no
 `--revisao`.
 
+## Como a ETAPA 1 é decidida
+
+### A regra
+
+O estudo é avaliado pela string de busca da revisão, sobre **título, resumo e palavras-chave
+juntos**. É o mesmo que o `TITLE-ABS-KEY` do Scopus e o *Topic* do Web of Science fazem: cada termo
+pode estar em qualquer um dos três campos.
+
+| Situação | Decisão |
+|---|---|
+| atende à string | `aceitar`, com o `criterio_de_aceite` |
+| tem resumo e não atende à string | `rejeitar`, com o `criterio_de_rejeicao` |
+| não tem resumo e não atende à string | conferência manual: a linha sai em branco |
+
+O caso sem resumo fica com você porque ali "não atende" mediria a lacuna do registro, e não o
+artigo. Antes de chegar nele, o `completar` tenta buscar o resumo fora do Parsifal.
+
+### A comparação
+
+A comparação imita o que as bases fazem sozinhas, para que a triagem não seja mais rígida que a busca:
+
+- **maiúscula e minúscula são iguais:** `LLM` casa com `llm`;
+- **hífen e espaço são iguais:** `"on-device"` casa com *on device*, e `"full page"` com *full-page*;
+- **plural regular conta:** `API` casa com *APIs*, e `"edge device"` com *edge devices*;
+- **termo casa palavra inteira:** `API` não casa dentro de *rapid*;
+- **frase entre aspas casa a sequência inteira**, e não atravessa de um campo para outro.
+
+A string aceita termos soltos, frases entre aspas, `*` como curinga (`orchestrat*`), `AND`, `OR`,
+`NOT` (também na forma `AND NOT`) e parênteses. `AND` tem precedência sobre `OR`, como nas bases.
+Código de campo (`TITLE-ABS-KEY(...)`) e operador de proximidade (`NEAR/3`, `W/2`) são recusados
+com erro, porque com eles a regra deixaria de ser a mesma da busca.
+
+### A evidência
+
+A coluna `evidencia` mostra, para cada grupo de sinônimos ligado por `AND` na string, os termos que
+casaram, ou `nenhum termo` no grupo que faltou:
+
+```
+G1: LLM, LLMs | G2: nenhum termo | G3: mobile
+```
+
+É ela que permite conferir uma rejeição sem abrir o artigo, e descrever no método por que cada
+estudo saiu.
+
+### Limites conhecidos
+
+- **Lematização.** As bases também casam formas que não são plural regular (*strategy* e
+  *strategies*, por exemplo). Aqui só o plural com `s` e `es` é coberto. Um termo com plural
+  irregular precisa estar na string nas duas formas, ou com curinga.
+- **Palavras-chave indexadas.** Algumas bases casam a busca também no vocabulário controlado delas,
+  que nem sempre vem no export. Um estudo que entrou só por esse caminho sai aqui como `rejeitar`.
+  Por isso a planilha é conferida antes do `aplicar`: vale olhar uma amostra das rejeições.
+
+## As notas para a ETAPA 2
+
+Idioma e contagem de páginas são calculados, mas **não entram na decisão da ETAPA 1**: os dois só
+se confirmam com o arquivo aberto. Vão na coluna `notas_etapa_2` para poupar conferência depois.
+
+- **Idioma.** O campo `language` do registro vence a detecção pelo texto: um artigo em russo com
+  resumo em inglês seria detectado como inglês. Sem o campo, a detecção roda sobre título e resumo
+  e só vira nota quando afirma outro idioma com confiança alta.
+- **Páginas.** Contadas pelo intervalo do campo `pages` (`123-127` são 5 páginas). Vira nota quando
+  o intervalo é legível e tem menos de 5 páginas.
+
+Quando o metadado não permite afirmar nada (campo de páginas vazio, texto curto demais para detectar
+idioma), a automação fica calada em vez de encher a planilha de ruído.
+
 ## A planilha de trabalho
 
 `dados/decisoes.xlsx`. É XLSX e não CSV porque traz filtro e busca por coluna, que é o que falta na
 tela do Parsifal.
 
-| Coluna | De quem é |
+| Coluna | O que é |
 |---|---|
-| **`acao`** | **sua.** Escreva `aceitar` ou `rejeitar`. Vazio quer dizer "ainda não decidi" |
-| **`criterio`** | **sua.** O texto do critério. A aba `criterios` da planilha tem a lista pronta, lida do Parsifal |
-| `sugestao`, `sinais`, `notas_etapa_2`, `recorte_em` | da automação, refeitas a cada `classificar` |
+| **`acao`** | `aceitar` ou `rejeitar`, preenchida pela automação. Mude o que discordar. Vazio quer dizer "não aplicar" |
+| **`criterio`** | o critério que vai junto, também preenchido. A aba `criterios` da planilha tem a lista lida do Parsifal |
+| `automacao` | a decisão original da automação (`aceitar`, `rejeitar` ou `manual`), para comparar com a sua |
+| `evidencia` | os termos da string que casaram, grupo por grupo |
+| `notas_etapa_2` | idioma e páginas |
 
-**A automação nunca escreve nas suas duas colunas.** Rodar `classificar` de novo recalcula os sinais
-e preserva o que você decidiu, linha por linha.
+**O que você muda é seu.** Rodar `classificar` de novo recalcula só as linhas em que `acao` e
+`criterio` continuam como a automação preencheu. Linha em que você mudou qualquer uma das duas fica
+como está.
 
 `aplicar` lê a coluna `acao`, compara com o status que está no Parsifal e **só escreve o que está
-diferente**. Rodar duas vezes seguidas não reescreve nada.
-
-Rejeição exige critério, porque é o critério que registra em que etapa o estudo saiu. Aceite sem
-critério usa o `criterio_de_aceite` da revisão.
-
-## O que a automação faz e o que não faz
-
-**Não exclui nada por conta própria.** Cada estudo sai com um de três rótulos:
-
-| Rótulo | Significa |
-|---|---|
-| `MANTER` | nada a apontar: nenhum sinal disparou |
-| `SINALIZAR` | tem algo a conferir, e a coluna `sinais` diz o quê |
-| `SEM_RESUMO` | o registro chegou sem resumo: a ETAPA 1 não decide, segue para a 2 |
-
-A decisão de excluir é sempre sua. O motivo é a assimetria de custo da ETAPA 1: **exclusão errada é
-irrecuperável** (o estudo sai do funil e ninguém olha de novo), enquanto **inclusão errada custa uma
-leitura na ETAPA 2**.
-
-### Os campos lidos
-
-**Título, palavras-chave e resumo.** As palavras-chave contam tanto quanto os outros dois: a busca
-nas bases costuma rodar em `TITLE-ABS-KEY`, então um artigo pode ter entrado no corpus pelo
-casamento na keyword. Ignorar essa coluna faria "termo ausente" medir a pobreza do export, e não o
-artigo.
-
-Pela mesma razão, **registro sem resumo não é decidido aqui**. Excluir por ausência de resumo seria
-excluir pela lacuna do metadado.
-
-### Os sinais
-
-| Sinal | Dispara quando |
-|---|---|
-| Estudo secundário | aparece `survey`, `systematic review`, `mapping study`, `state of the art`... |
-| Literatura cinza | título, resumo, keywords ou fonte tem `arXiv`, `preprint`, `technical report`, `thesis`... |
-| Fora do domínio | aparece algum `termos_colisao` **e** nenhum `termos_dominio` |
-| Fora do domínio | nenhum `termos_dominio` nem `siglas_ambiguas` nos três campos |
-| Recorte ausente | nenhum `termos_recorte` nos três campos |
-
-Os dois primeiros valem para qualquer tema e ficam no código. Os três últimos dependem do
-vocabulário da revisão.
-
-**Sigla ambígua não conta como prova de domínio.** No exemplo, `FL` é aprendizado federado, mas
-também *fuzzy logic*. Um estudo cuja única marca do tema é a sigla, ao lado de `fuzzy` ou
-`membership function`, é justamente o que precisa ser olhado. Com um termo inequívoco
-(`federated learning`) no texto, a colisão é ignorada.
-
-### As notas para a ETAPA 2
-
-Idioma e contagem de páginas são calculados, mas **não entram na decisão da ETAPA 1**: os dois só
-se confirmam com o arquivo aberto. Vão na coluna `notas_etapa_2` para poupar conferência depois.
-
-O campo `language` do registro vence a detecção pelo texto: um artigo em russo com resumo em inglês
-seria detectado como inglês. Quando o metadado não permite afirmar nada (campo de páginas vazio,
-texto curto demais para detectar idioma), a automação fica calada em vez de encher a planilha de
-ruído.
-
-A coluna `recorte_em` diz *onde* o termo do recorte aparece: título, palavras-chave, ou resumo com
-quantas menções. Não decide nada, serve para ordenar a ETAPA 2. Recorte no título é indício de foco;
-uma menção solta no resumo é indício de menção.
+diferente**. Rodar duas vezes seguidas não reescreve nada. Rejeição sem critério é recusada, porque é
+o critério que registra em que etapa o estudo saiu.
 
 ## Como as decisões chegam no Parsifal
 
 Quando você abre um artigo, escolhe o critério e salva, o navegador manda um POST para
 `save_article_details/` com o formulário inteiro. A automação monta esse mesmo POST: abre o artigo,
 lê os campos que já estão lá, troca **só** o status (`A` de aceito, `R` de rejeitado) e o critério,
-e devolve o resto intacto. Por isso não usa navegador automatizado.
+e devolve o resto intacto. Por isso não usa navegador automatizado. O POST nunca é repetido
+automaticamente: repetir sem saber se o primeiro chegou seria escrever às cegas.
 
 As rotas foram levantadas da instância hospedada (parsif.al v2.2.1), não do código do Parsifal no
 GitHub, porque as duas divergem. Na hospedada os endpoints ficam sob `/reviews/conducting/`:
 `source_articles/`, `article_details/`, `save_article_details/`.
 
-Cuidados com os critérios cadastrados no Parsifal:
+Os endpoints de ação em lote (`multiple_articles_action/`) só trocam o status e não gravam critério,
+então não são usados.
+
+### Cuidados com os critérios
 
 - **Um artigo carrega um critério só.** No modelo do Parsifal, o critério é chave estrangeira única,
   tanto no aceite quanto na rejeição.
-- **Ao mexer num critério, edite o texto em vez de apagar e recriar.** O artigo aponta para o
-  critério pelo id, e recriar quebraria marcação já feita.
-- Os endpoints de ação em lote (`multiple_articles_action/`) só trocam o status e não gravam
-  critério, então não são usados.
+- **O Parsifal não edita critério: só adiciona e remove.** Para mudar o texto ou a etapa de um
+  critério, adicione o novo e depois remova o antigo.
+- **Remover um critério apaga o critério dos artigos que já o usavam.** O artigo continua aceito ou
+  rejeitado, mas sem dizer por quê. Por isso a lista de critérios se acerta **antes** do primeiro
+  `aplicar`. Depois disso, mexer num critério em uso significa remarcar os artigos dele.
 
 ## Estrutura do repositório
 
 ```
-config/revisoes.exemplo.json  modelo do config/revisoes.json, onde fica o vocabulário de cada revisão
-triagem/regras.py             os sinais. É o coração, e é onde estão a maior parte dos testes
+config/revisoes.exemplo.json  modelo do config/revisoes.json: a string e os dois critérios de cada revisão
+triagem/string_de_busca.py    lê a string e avalia cada estudo. É o coração da triagem
+triagem/regras.py             a decisão da ETAPA 1 e as notas de idioma e páginas
 triagem/dados.py              lê dados/estudos.csv ou um .bib exportado das bases
 triagem/parsifal.py           cliente HTTP: loga, lista artigos, lê a tela de cada um, marca no Parsifal
 triagem/resumo_externo.py     busca o resumo na página do artigo quando o Parsifal não tem
 triagem/planilha.py           escreve e lê o decisoes.xlsx
 triagem/aplicacao.py          compara a planilha com o Parsifal e diz o que escrever
 triagem/cli.py                os comandos
-tests/                        pytest sobre as regras e sobre a leitura de HTML, sem rede
+tests/                        pytest sobre a string, as regras e a leitura de HTML, sem rede
 ```
 
 ## Critério de sucesso
 
 1. Uma pessoa tria ~50 estudos na ETAPA 1 à mão. Vira o conjunto de referência.
-2. A automação roda sobre os mesmos 50: todo estudo excluído à mão tem que ter saído com
-   `SINALIZAR` e o sinal correspondente. Sinal que não apareceu é buraco de regra.
+2. A automação roda sobre os mesmos 50 e a concordância é medida: cada divergência é lida para saber
+   se a causa é a string, o registro (resumo ou palavras-chave faltando) ou a comparação.
 3. `aplicar` sem `--confirmar` nunca escreve.
 4. Rodar duas vezes seguidas não muda nada na segunda.
 

@@ -1,54 +1,14 @@
 {
   "A": {
     "nome": "Aprendizado federado em dispositivos de borda",
-    "criterio_de_aceite": "ETAPA 1 - Estudo trata de aprendizado federado",
-    "termos_dominio": [
-      "federated learning",
-      "federated training",
-      "federated optimization",
-      "federated averaging",
-      "fedavg"
-    ],
-    "siglas_ambiguas": [
-      "fl"
-    ],
-    "termos_colisao": [
-      "fuzzy",
-      "membership function",
-      "fuzzy inference"
-    ],
-    "termos_recorte": [
-      "edge device",
-      "edge devices",
-      "edge computing",
-      "internet of things",
-      "iot"
-    ]
+    "string": "(\"federated learning\" OR \"federated training\" OR \"federated averaging\" OR FedAvg) AND (\"edge device\" OR \"edge computing\" OR \"internet of things\" OR IoT)",
+    "criterio_de_aceite": "ETAPA 1 - Atende à string de busca em título, resumo ou palavras-chave",
+    "criterio_de_rejeicao": "ETAPA 1 - Não atende à string de busca em título, resumo ou palavras-chave"
   },
   "B": {
     "nome": "Aprendizado federado em saúde",
-    "criterio_de_aceite": "ETAPA 1 - Estudo trata de aprendizado federado",
-    "termos_dominio": [
-      "federated learning",
-      "federated training",
-      "federated optimization",
-      "federated averaging",
-      "fedavg"
-    ],
-    "siglas_ambiguas": [
-      "fl"
-    ],
-    "termos_colisao": [
-      "fuzzy",
-      "membership function",
-      "fuzzy inference"
-    ],
-    "termos_recorte": [
-      "healthcare",
-      "medical",
-      "clinical",
-      "hospital",
-      "electronic health records"
-    ]
+    "string": "(\"federated learning\" OR \"federated training\" OR FedAvg) AND (healthcare OR medical OR clinical OR hospital* OR \"electronic health record\")",
+    "criterio_de_aceite": "ETAPA 1 - Atende à string de busca em título, resumo ou palavras-chave",
+    "criterio_de_rejeicao": "ETAPA 1 - Não atende à string de busca em título, resumo ou palavras-chave"
   }
 }

@@ -1,8 +1,8 @@
 """A planilha de trabalho, em XLSX.
 
-Só existe uma coluna que é sua: `acao`. Escreva `aceitar` ou `rejeitar` nela, salve, e o `aplicar`
-leva para o Parsifal. A automação nunca escreve nessa coluna - é o que garante que rodar
-`classificar` de novo não desfaz decisão sua.
+A automação preenche `acao` e `criterio` com a decisão dela, e você confere. O que você mudar nessas
+duas colunas é seu: rodar `classificar` de novo recalcula só as linhas que continuam como a
+automação deixou. A coluna `automacao` guarda a decisão original, para comparar com a sua.
 
 O formato é XLSX e não CSV porque o CSV aberto no editor perdia o que era salvo, e porque a planilha
 traz filtro e busca por coluna, que é o que falta na tela do Parsifal.
@@ -39,10 +39,9 @@ COLUNAS = (
     ("acao", 12),
     ("criterio", 60),
     ("titulo", 70),
-    ("sugestao", 12),
-    ("sinais", 60),
+    ("automacao", 12),
+    ("evidencia", 60),
     ("notas_etapa_2", 40),
-    ("recorte_em", 24),
     ("doi", 28),
 )
 
@@ -62,6 +61,12 @@ def normalizar_acao(valor: str | None) -> str:
         raise ValueError(f"ação não reconhecida: {valor!r}. Use 'aceitar' ou 'rejeitar'.")
 
     return SINONIMOS[sem_acento]
+
+
+def foi_editada(anterior: dict[str, str], preenchido_pela_automacao: tuple[str, str]) -> bool:
+    """Se a ação ou o critério da linha não são mais os que a automação preencheu."""
+    escrito = (anterior.get("acao", "").strip(), anterior.get("criterio", "").strip())
+    return escrito != preenchido_pela_automacao
 
 
 def escrever(caminho: Path, linhas: list[dict[str, str]], criterios: list[str] | None = None) -> None:

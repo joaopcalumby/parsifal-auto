@@ -1,22 +1,28 @@
 """Testes das regras da ETAPA 1.
 
-O teste que sustenta o desenho é o negativo: nenhum caminho de `triar` exclui. A automação aponta,
-o revisor decide.
+A decisão vem só da string de busca, a mesma colada nas bases. Idioma e páginas são calculados à
+parte e viram nota para a ETAPA 2, sem pesar na decisão.
 
 O tema dos exemplos é o mesmo do `config/revisoes.exemplo.json`: aprendizado federado em
-dispositivos de borda, com a sigla FL colidindo com fuzzy logic.
+dispositivos de borda.
 """
+
+import json
+from pathlib import Path
 
 import pytest
 
-from triagem import regras
+from triagem import planilha, regras
 
-VOCABULARIO = regras.Vocabulario(
-    dominio=("federated learning", "federated training", "fedavg"),
-    siglas_ambiguas=("fl",),
-    colisao=("fuzzy", "membership function"),
-    recorte=("edge device", "edge devices", "device level", "iot"),
-)
+RAIZ = Path(__file__).resolve().parent.parent
+
+BLOCO = {
+    "nome": "Aprendizado federado em dispositivos de borda",
+    "string": '("federated learning" OR "federated training" OR FedAvg) AND ("edge device" OR IoT)',
+    "criterio_de_aceite": "ETAPA 1 - Atende à string de busca em título, resumo ou palavras-chave",
+    "criterio_de_rejeicao": "ETAPA 1 - Não atende à string de busca em título, resumo ou palavras-chave",
+}
+REVISAO = regras.Revisao.do_config(BLOCO)
 
 RESUMO_TIPICO = (
     "This paper presents a federated learning framework for training models on edge devices "
@@ -80,99 +86,6 @@ class TestSinalDeIdioma:
         assert regras.sinal_de_idioma("FL baseline", "") is None
 
 
-class TestVocabulario:
-    def test_le_as_chaves_da_revisao_em_minusculas(self):
-        vocabulario = regras.Vocabulario.da_revisao(
-            {
-                "termos_dominio": ["Federated Learning"],
-                "siglas_ambiguas": ["FL"],
-                "termos_colisao": ["Fuzzy"],
-                "termos_recorte": ["IoT"],
-            }
-        )
-        assert vocabulario == regras.Vocabulario(
-            dominio=("federated learning",), siglas_ambiguas=("fl",), colisao=("fuzzy",), recorte=("iot",)
-        )
-
-    def test_chave_ausente_vira_lista_vazia(self):
-        assert regras.Vocabulario.da_revisao({"nome": "só o nome"}) == regras.Vocabulario()
-
-
-class TestSinaisDaEtapa1:
-    def _sinais(self, titulo, resumo="", palavras_chave="", fonte="", vocabulario=VOCABULARIO):
-        return {
-            sinal.criterio
-            for sinal in regras.levantar_sinais(titulo, resumo, palavras_chave, fonte, vocabulario)
-        }
-
-    def test_survey_e_sinalizado_como_estudo_secundario(self):
-        assert regras.CRITERIO_SECUNDARIO in self._sinais(
-            "A survey of federated learning on edge devices", RESUMO_TIPICO
-        )
-
-    def test_preprint_e_sinalizado_como_literatura_cinza(self):
-        assert regras.CRITERIO_CINZA in self._sinais(
-            "Federated learning on edge devices", RESUMO_TIPICO, fonte="arXiv preprint"
-        )
-
-    def test_vocabulario_da_colisao_e_sinalizado_como_fora_de_dominio(self):
-        assert regras.CRITERIO_DOMINIO in self._sinais(
-            "An FL controller for IoT irrigation",
-            "We tune the fuzzy rules and the membership function of the controller on IoT sensors.",
-        )
-
-    def test_termo_inequivoco_vence_a_colisao(self):
-        assert regras.CRITERIO_DOMINIO not in self._sinais(
-            "Fuzzy client selection for federated learning on IoT",
-            "We select clients with fuzzy rules before each federated training round.",
-        )
-
-    def test_sigla_sozinha_sem_colisao_nao_sinaliza(self):
-        """A sigla conta como termo do domínio; só não prova o domínio diante da colisão."""
-        assert self._sinais(
-            "FL on edge devices", "We study FL with heterogeneous clients on edge devices."
-        ) == set()
-
-    def test_sem_termo_do_dominio_e_sinalizado(self):
-        sinais = regras.levantar_sinais(
-            "Centralized training on edge devices",
-            "We train a single model in the cloud and deploy it to edge devices.",
-            "",
-            "",
-            VOCABULARIO,
-        )
-        assert [sinal.criterio for sinal in sinais] == [regras.CRITERIO_DOMINIO]
-        assert "nenhum termo do domínio" in sinais[0].evidencia
-
-    def test_estudo_tipico_da_revisao_nao_gera_sinal(self):
-        assert self._sinais("Federated learning on edge devices", RESUMO_TIPICO) == set()
-
-    def test_ausencia_do_termo_do_recorte_e_sinalizada(self):
-        assert regras.CRITERIO_RECORTE in self._sinais(
-            "Federated learning for image classification",
-            "We train models across many clients with federated averaging on CIFAR-10.",
-        )
-
-    def test_termo_do_recorte_so_nas_palavras_chave_e_suficiente(self):
-        """A busca costuma casar em TITLE-ABS-KEY, então keyword vale tanto quanto título e resumo."""
-        assert regras.CRITERIO_RECORTE not in self._sinais(
-            "Communication-efficient federated learning",
-            "We compress model updates sent by clients during federated training.",
-            palavras_chave="federated learning; IoT; compression",
-        )
-
-    def test_termo_do_dominio_so_nas_palavras_chave_e_suficiente(self):
-        assert regras.CRITERIO_DOMINIO not in self._sinais(
-            "Privacy-preserving model training on edge devices",
-            "Clients keep their data locally and only share model updates.",
-            palavras_chave="federated learning",
-        )
-
-    def test_vocabulario_vazio_desliga_dominio_e_recorte(self):
-        assert self._sinais(
-            "Any study at all", "An abstract without any configured term.", vocabulario=regras.Vocabulario()
-        ) == set()
-
 
 class TestNotasDaEtapa2:
     def test_short_paper_vira_nota_e_nao_sinal(self):
@@ -204,79 +117,62 @@ class TestNotasDaEtapa2:
         assert regras.sinal_de_idioma_declarado(declarado) is None
 
 
-class TestLocalizacaoDoRecorte:
-    """Ordenação para a ETAPA 2: recorte no título é indício de foco, no resumo pode ser menção."""
 
-    def _onde(self, titulo, resumo="", palavras_chave=""):
-        return regras.localizacao_do_recorte(titulo, resumo, palavras_chave, VOCABULARIO.recorte)
 
-    def test_recorte_no_titulo(self):
-        assert self._onde("Federated learning on edge devices") == "título"
+class TestRevisao:
+    def test_le_a_string_e_os_dois_criterios(self):
+        assert REVISAO.nome == BLOCO["nome"]
+        assert len(REVISAO.string.grupos) == 2
+        assert REVISAO.criterio_de(planilha.ACEITAR) == BLOCO["criterio_de_aceite"]
+        assert REVISAO.criterio_de(planilha.REJEITAR) == BLOCO["criterio_de_rejeicao"]
+        assert REVISAO.criterio_de(regras.MANUAL) == ""
 
-    def test_recorte_nas_palavras_chave(self):
-        assert self._onde("Federated learning", palavras_chave="IoT; FL") == "palavras-chave"
+    @pytest.mark.parametrize("chave", ["string", "criterio_de_aceite", "criterio_de_rejeicao"])
+    def test_chave_obrigatoria_ausente_e_recusada_pelo_nome(self, chave):
+        bloco = {nome: valor for nome, valor in BLOCO.items() if nome != chave}
+        with pytest.raises(ValueError, match=chave):
+            regras.Revisao.do_config(bloco)
 
-    def test_conta_ocorrencias_no_resumo(self):
-        assert self._onde("Federated learning", resumo=RESUMO_TIPICO) == "resumo (1x)"
+    def test_string_invalida_e_recusada_com_o_motivo(self):
+        with pytest.raises(ValueError, match="string: parêntese sem fechar"):
+            regras.Revisao.do_config({**BLOCO, "string": "(LLM OR SLM"})
 
-    def test_sinonimos_sobrepostos_contam_como_uma_mencao(self):
-        """'edge device level' casa com `edge device` e `device level`, e é uma menção só."""
-        assert self._onde("Federated learning", resumo="Work at the edge device level here.") == (
-            "resumo (1x)"
-        )
-
-    def test_duas_mencoes_separadas_contam_duas(self):
-        assert self._onde(
-            "Federated learning", resumo="Clients run on edge devices. Each IoT node trains locally."
-        ) == "resumo (2x)"
-
-    def test_soma_os_tres_campos(self):
-        onde = self._onde("Federated learning on IoT", RESUMO_TIPICO, palavras_chave="edge devices")
-        assert onde == "título, palavras-chave, resumo (1x)"
-
-    def test_ausente_quando_nenhum_campo_traz_o_recorte(self):
-        assert self._onde("Federated learning in the cloud", "We train on servers.") == "ausente"
+    def test_o_exemplo_publicado_carrega(self):
+        exemplo = json.loads((RAIZ / "config" / "revisoes.exemplo.json").read_text(encoding="utf-8"))
+        for bloco in exemplo.values():
+            regras.Revisao.do_config(bloco)
 
 
 class TestTriar:
-    def _triar(self, titulo, resumo, palavras_chave="", fonte="", paginas="100-112"):
-        return regras.triar(titulo, resumo, palavras_chave, fonte, paginas, VOCABULARIO)
+    def _triar(self, titulo, resumo, palavras_chave="", paginas="100-112", idioma=""):
+        return regras.triar(titulo, resumo, palavras_chave, paginas, REVISAO, idioma)
 
-    def test_estudo_alvo_passa_limpo(self):
-        assert self._triar("Federated learning on edge devices", RESUMO_TIPICO).acao == regras.MANTER
+    def test_estudo_que_atende_a_string_e_aceito_com_a_evidencia(self):
+        decisao = self._triar("Federated learning on edge devices", RESUMO_TIPICO)
+        assert decisao.acao == planilha.ACEITAR
+        assert decisao.evidencia == "G1: federated learning | G2: edge device"
 
-    @pytest.mark.parametrize(
-        "titulo, resumo, paginas",
-        [
-            ("An FL controller for IoT irrigation", "Fuzzy rules tuned on IoT sensors.", "45-60"),
-            ("Federated learning on edge devices", RESUMO_TIPICO, "10-13"),
-            ("Verteiltes Lernen auf mobilen Geraeten", RESUMO_EM_ALEMAO, "200-215"),
-            ("A survey of federated learning on edge devices", RESUMO_TIPICO, "100-140"),
-        ],
-    )
-    def test_nenhum_caminho_exclui(self, titulo, resumo, paginas):
-        assert self._triar(titulo, resumo, paginas=paginas).acao in (
-            regras.MANTER,
-            regras.SINALIZAR,
-            regras.SEM_RESUMO,
-        )
+    def test_estudo_com_resumo_que_nao_atende_e_rejeitado(self):
+        decisao = self._triar("Federated learning in the cloud", "We train on data center servers.")
+        assert decisao.acao == planilha.REJEITAR
+        assert decisao.evidencia == "G1: federated learning | G2: nenhum termo"
 
-    def test_short_paper_nao_interrompe_a_etapa_1(self):
+    def test_sem_resumo_e_sem_atender_vai_para_conferencia_manual(self):
+        """Sem resumo, "não atende" mediria a lacuna do registro, não o artigo."""
+        assert self._triar("Federated learning in the cloud", "").acao == regras.MANUAL
+
+    def test_sem_resumo_mas_atendendo_pelo_titulo_e_aceito(self):
+        assert self._triar("Federated learning on IoT", "").acao == planilha.ACEITAR
+
+    def test_palavras_chave_contam_como_titulo_e_resumo(self):
+        decisao = self._triar("Privacy-preserving training", RESUMO_EM_ALEMAO, palavras_chave="FedAvg; IoT")
+        assert decisao.acao == planilha.ACEITAR
+
+    def test_notas_da_etapa_2_nao_mudam_a_decisao(self):
         decisao = self._triar("Federated learning on edge devices", RESUMO_TIPICO, paginas="10-13")
-        assert decisao.acao == regras.MANTER
-        assert any(nota.criterio == regras.CRITERIO_SHORT_PAPER for nota in decisao.notas)
+        assert decisao.acao == planilha.ACEITAR
+        assert [nota.criterio for nota in decisao.notas] == [regras.CRITERIO_SHORT_PAPER]
 
-    def test_idioma_nao_interrompe_a_etapa_1(self):
-        decisao = self._triar("Verteiltes Lernen auf mobilen Geraeten", RESUMO_EM_ALEMAO)
-        assert any(nota.criterio == regras.CRITERIO_IDIOMA for nota in decisao.notas)
-
-    def test_registro_sem_resumo_nao_e_decidido_na_etapa_1(self):
-        decisao = self._triar("Federated learning on edge devices", "")
-        assert decisao.acao == regras.SEM_RESUMO
-        assert decisao.sinais == []
-
-    def test_registro_sem_resumo_nao_sinaliza_termo_ausente(self):
-        """Sem resumo, 'nenhum termo do recorte' mediria a lacuna do metadado, não o artigo."""
-        decisao = self._triar("Untitled record", "", paginas="")
-        assert decisao.acao == regras.SEM_RESUMO
-        assert decisao.sinais == []
+    def test_idioma_declarado_vira_nota(self):
+        decisao = self._triar("Federated learning on edge devices", RESUMO_TIPICO, idioma="Russian")
+        assert [nota.criterio for nota in decisao.notas] == [regras.CRITERIO_IDIOMA]

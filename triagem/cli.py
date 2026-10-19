@@ -39,9 +39,6 @@ COLUNAS_DO_ESTUDO = (
     "status",
 )
 
-# O que é seu na planilha e a automação nunca sobrescreve.
-COLUNAS_DO_REVISOR = ("acao", "criterio")
-
 
 def _cliente() -> ClienteParsifal:
     load_dotenv(RAIZ / ".env")
@@ -58,16 +55,31 @@ def _cliente() -> ClienteParsifal:
     return cliente
 
 
-def _revisao(sigla: str) -> dict:
+def _revisao(sigla: str) -> regras.Revisao:
     if not CONFIG_DE_REVISOES.exists():
         raise SystemExit(
             f"{CONFIG_DE_REVISOES} não existe. Copie config/revisoes.exemplo.json para "
-            "config/revisoes.json e descreva nele a sua revisão."
+            "config/revisoes.json e cole nele a string da sua revisão."
         )
     revisoes = json.loads(CONFIG_DE_REVISOES.read_text(encoding="utf-8"))
     if sigla not in revisoes:
         raise SystemExit(f"revisão {sigla!r} não está em {CONFIG_DE_REVISOES}")
-    return revisoes[sigla]
+
+    try:
+        return regras.Revisao.do_config(revisoes[sigla])
+    except ValueError as erro:
+        raise SystemExit(f"revisão {sigla!r} em {CONFIG_DE_REVISOES}: {erro}") from erro
+
+
+def _avisar_criterio_fora_do_parsifal(revisao: regras.Revisao) -> None:
+    """O `aplicar` recusa critério que não existe no Parsifal. Melhor saber agora que depois."""
+    if not CRITERIOS.exists():
+        return
+
+    cadastrados = set(json.loads(CRITERIOS.read_text(encoding="utf-8")))
+    for criterio in (revisao.criterio_de_aceite, revisao.criterio_de_rejeicao):
+        if criterio not in cadastrados:
+            print(f"aviso: critério não cadastrado no Parsifal, o `aplicar` vai recusar: {criterio}")
 
 
 def comando_verificar(_argumentos) -> None:
@@ -203,13 +215,12 @@ def comando_completar(argumentos) -> None:
 
 
 def comando_classificar(argumentos) -> None:
-    """Monta a planilha de trabalho, sem tocar na coluna que é sua.
+    """Monta a planilha de trabalho com a decisão da string já preenchida.
 
-    Se a planilha já existe, as colunas `acao` e `criterio` de cada linha são preservadas como estão
-    e só o que a automação calcula é refeito. Linha nova entra no fim.
+    Se a planilha já existe, a linha em que você mudou a ação ou o critério fica como você deixou,
+    e só o que continua como a automação preencheu é recalculado. Linha nova entra no fim.
     """
     revisao = _revisao(argumentos.revisao)
-    vocabulario = regras.Vocabulario.da_revisao(revisao)
     entrada = Path(argumentos.entrada) if argumentos.entrada else ESTUDOS
     if not entrada.exists():
         raise SystemExit(f"{entrada} não existe. Rode `baixar` antes.")
@@ -227,26 +238,28 @@ def comando_classificar(argumentos) -> None:
             titulo=estudo.titulo,
             resumo=estudo.resumo,
             palavras_chave=estudo.palavras_chave,
-            fonte=estudo.fonte,
             paginas=estudo.paginas,
-            vocabulario=vocabulario,
+            revisao=revisao,
             idioma_declarado=estudo.idioma,
         )
+        acao, criterio = _preenchimento(decisao.acao, revisao)
 
-        anterior = anteriores.get(estudo.id, {})
-        se_ja_decidiu = any(anterior.get(coluna, "").strip() for coluna in COLUNAS_DO_REVISOR)
-        preservadas += 1 if se_ja_decidiu else 0
+        anterior = anteriores.get(estudo.id)
+        if anterior:
+            preenchido_antes = _preenchimento(anterior.get("automacao", ""), revisao)
+            if planilha.foi_editada(anterior, preenchido_antes):
+                acao, criterio = anterior.get("acao", ""), anterior.get("criterio", "")
+                preservadas += 1
 
         linhas.append(
             {
                 "id": estudo.id,
-                "acao": anterior.get("acao", ""),
-                "criterio": anterior.get("criterio", ""),
+                "acao": acao,
+                "criterio": criterio,
                 "titulo": estudo.titulo[:250],
-                "sugestao": decisao.acao,
-                "sinais": decisao.sinais_em_texto,
+                "automacao": decisao.acao,
+                "evidencia": decisao.evidencia,
                 "notas_etapa_2": decisao.notas_em_texto,
-                "recorte_em": decisao.recorte_em,
                 "doi": estudo.doi,
             }
         )
@@ -254,17 +267,23 @@ def comando_classificar(argumentos) -> None:
     criterios = json.loads(CRITERIOS.read_text(encoding="utf-8")) if CRITERIOS.exists() else []
     planilha.escrever(DECISOES, linhas, criterios)
 
-    contagem = Counter(linha["sugestao"] for linha in linhas)
-    print(f"revisão {argumentos.revisao} ({revisao.get('nome', '')}), {len(linhas)} estudos")
-    print(f"  SINALIZAR  {contagem[regras.SINALIZAR]:>5}  (tem algo a conferir, veja a coluna 'sinais')")
-    print(f"  MANTER     {contagem[regras.MANTER]:>5}  (nada a apontar)")
-    print(f"  SEM_RESUMO {contagem[regras.SEM_RESUMO]:>5}  (indecidível na ETAPA 1)")
+    contagem = Counter(linha["automacao"] for linha in linhas)
+    print(f"revisão {argumentos.revisao} ({revisao.nome}), {len(linhas)} estudos")
+    print(f"  aceitar   {contagem[planilha.ACEITAR]:>5}  (atende à string)")
+    print(f"  rejeitar  {contagem[planilha.REJEITAR]:>5}  (tem resumo e não atende à string)")
+    print(f"  manual    {contagem[regras.MANUAL]:>5}  (sem resumo e não atende: confira à mão)")
     if preservadas:
         print(f"\n  {preservadas} linhas com decisão sua, preservadas como estavam")
+    _avisar_criterio_fora_do_parsifal(revisao)
 
     print(f"\n{DECISOES}")
-    print("Escreva 'aceitar' ou 'rejeitar' na coluna 'acao', o critério na coluna 'criterio',")
-    print("salve, e rode `aplicar`. A coluna 'sugestao' é só o palpite da automação.")
+    print("Confira as colunas 'acao' e 'criterio', mude o que discordar, salve e rode `aplicar`.")
+
+
+def _preenchimento(acao_da_automacao: str, revisao: regras.Revisao) -> tuple[str, str]:
+    """O que a automação escreve em `acao` e `criterio`. Conferência manual fica em branco."""
+    acao = "" if acao_da_automacao == regras.MANUAL else acao_da_automacao
+    return acao, revisao.criterio_de(acao_da_automacao)
 
 
 def comando_aplicar(argumentos) -> None:
@@ -281,10 +300,10 @@ def comando_aplicar(argumentos) -> None:
     status_no_parsifal = {artigo["id"]: artigo["status"] for artigo in cliente.listar_artigos()}
 
     revisao = _revisao(argumentos.revisao)
-    plano = aplicacao.planejar(linhas, status_no_parsifal, revisao.get("criterio_de_aceite", ""))
+    plano = aplicacao.planejar(linhas, status_no_parsifal, revisao.criterio_de_aceite)
 
     decididas = len(plano.a_aplicar) + len(plano.ja_iguais)
-    print(f"{len(linhas)} linhas na planilha, {decididas} com decisão sua")
+    print(f"{len(linhas)} linhas na planilha, {decididas} com ação preenchida")
     print(f"  a aplicar:      {len(plano.a_aplicar)}")
     print(f"  já iguais:      {len(plano.ja_iguais)}")
     print(f"  com problema:   {len(plano.problemas)}")
