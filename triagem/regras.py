@@ -1,12 +1,13 @@
 """Regras da ETAPA 1: a string de busca decide, o revisor confere.
 
 A ETAPA 1 lê **título, palavras-chave e resumo**, os mesmos três campos em que a busca rodou nas
-bases. A regra é uma só: o estudo que atende à string nesses campos é aceito, o que tem resumo e não
-atende é rejeitado, e o que não tem resumo nem atende vai para conferência manual, porque ali "não
+bases, e o número de páginas do metadado. Quando a revisão configura um mínimo de páginas, o estudo
+abaixo dele sai como short-paper. Os demais seguem a string: quem atende é aceito, quem tem resumo e
+não atende é rejeitado, e quem não tem resumo nem atende vai para conferência manual, porque ali "não
 atende" mediria a lacuna do registro, não o artigo.
 
-Idioma e páginas são calculados, mas viram **nota para a ETAPA 2**, fora da decisão desta etapa:
-os dois só se confirmam com o arquivo aberto.
+O idioma é calculado, mas vira **nota para a ETAPA 2**, fora da decisão desta etapa: ele só se
+confirma com o arquivo aberto.
 """
 
 from __future__ import annotations
@@ -22,26 +23,34 @@ from triagem.string_de_busca import ErroNaString, StringDeBusca
 # langdetect é probabilístico e varia entre execuções sem semente fixa.
 DetectorFactory.seed = 0
 
+# Desfechos da ETAPA 1. Os dois primeiros têm o mesmo texto da ação na planilha.
+ATENDE = ACEITAR
+NAO_ATENDE = REJEITAR
+SHORT_PAPER = "short-paper"
 MANUAL = "manual"
 
 CRITERIO_IDIOMA = "ETAPA 2 - Estudo em idioma distinto do inglês"
-CRITERIO_SHORT_PAPER = "ETAPA 2 - Short-paper: estudo com menos de 5 páginas"
 
-MINIMO_DE_PAGINAS = 5
 CONFIANCA_MINIMA_DE_IDIOMA = 0.90
 CARACTERES_MINIMOS_PARA_DETECTAR_IDIOMA = 80
 
 CHAVES_OBRIGATORIAS = ("string", "criterio_de_aceite", "criterio_de_rejeicao")
+CHAVES_DE_SHORT_PAPER = ("minimo_de_paginas", "criterio_de_short_paper")
 
 
 @dataclass(frozen=True)
 class Revisao:
-    """Um bloco do `config/revisoes.json`: a string e o critério anexado a cada decisão."""
+    """Um bloco do `config/revisoes.json`: a string e o critério anexado a cada decisão.
+
+    `minimo_de_paginas` é None quando a revisão não exclui short-paper na ETAPA 1.
+    """
 
     nome: str
     string: StringDeBusca
     criterio_de_aceite: str
     criterio_de_rejeicao: str
+    minimo_de_paginas: int | None = None
+    criterio_de_short_paper: str = ""
 
     @classmethod
     def do_config(cls, bloco: dict) -> Revisao:
@@ -54,16 +63,43 @@ class Revisao:
         except ErroNaString as erro:
             raise ValueError(f"string: {erro}") from erro
 
+        minimo_de_paginas, criterio_de_short_paper = _short_paper(bloco)
         return cls(
             nome=str(bloco.get("nome", "")),
             string=string,
             criterio_de_aceite=bloco["criterio_de_aceite"].strip(),
             criterio_de_rejeicao=bloco["criterio_de_rejeicao"].strip(),
+            minimo_de_paginas=minimo_de_paginas,
+            criterio_de_short_paper=criterio_de_short_paper,
         )
 
-    def criterio_de(self, acao: str) -> str:
-        """O critério que vai junto da decisão da automação. Conferência manual não tem critério."""
-        return {ACEITAR: self.criterio_de_aceite, REJEITAR: self.criterio_de_rejeicao}.get(acao, "")
+    def preenchimento(self, desfecho: str) -> tuple[str, str]:
+        """A ação e o critério que a automação escreve na planilha.
+
+        Conferência manual fica em branco.
+        """
+        return {
+            ATENDE: (ACEITAR, self.criterio_de_aceite),
+            NAO_ATENDE: (REJEITAR, self.criterio_de_rejeicao),
+            SHORT_PAPER: (REJEITAR, self.criterio_de_short_paper),
+        }.get(desfecho, ("", ""))
+
+
+def _short_paper(bloco: dict) -> tuple[int | None, str]:
+    """Lê o par opcional `minimo_de_paginas` e `criterio_de_short_paper`: os dois, ou nenhum."""
+    presentes = [chave for chave in CHAVES_DE_SHORT_PAPER if bloco.get(chave) not in (None, "")]
+    if not presentes:
+        return None, ""
+    if len(presentes) != len(CHAVES_DE_SHORT_PAPER):
+        raise ValueError(
+            "short-paper exige as duas chaves juntas: minimo_de_paginas e criterio_de_short_paper"
+        )
+
+    minimo = bloco["minimo_de_paginas"]
+    if isinstance(minimo, bool) or not isinstance(minimo, int) or minimo < 1:
+        raise ValueError(f"minimo_de_paginas deve ser um inteiro positivo, recebido: {minimo!r}")
+
+    return minimo, str(bloco["criterio_de_short_paper"]).strip()
 
 
 @dataclass(frozen=True)
@@ -76,9 +112,9 @@ class Sinal:
 
 @dataclass
 class Decisao:
-    """Resultado da ETAPA 1 para um estudo: a ação, a evidência da string e as notas da ETAPA 2."""
+    """Resultado da ETAPA 1 para um estudo: o desfecho, a evidência e as notas da ETAPA 2."""
 
-    acao: str
+    desfecho: str
     evidencia: str
     notas: list[Sinal] = field(default_factory=list)
 
@@ -87,42 +123,28 @@ class Decisao:
         return " | ".join(f"{nota.criterio.split(' - ')[-1]}: {nota.evidencia}" for nota in self.notas)
 
 
+def _limites(intervalo: str | None) -> tuple[int, int] | None:
+    """Primeira e última página do campo `pages` do BibTeX, ou None se ele não for um intervalo."""
+    texto = str(intervalo or "").strip().replace("--", "-").replace("–", "-").replace("—", "-")
+    partes = [parte.strip() for parte in texto.split("-") if parte.strip()]
+    if len(partes) != 2 or not all(parte.isdigit() for parte in partes):
+        return None
+
+    return int(partes[0]), int(partes[1])
+
+
 def contar_paginas(intervalo: str | None) -> int | None:
     """Conta páginas a partir do campo `pages` do BibTeX.
 
-    Devolve None quando o campo não permite contagem confiável - página única sem intervalo,
-    número de artigo eletrônico, campo vazio ou formato inesperado. None nunca exclui: vira sinal.
+    Devolve None quando o campo não permite contagem confiável: página solta, intervalo de página
+    única, número de artigo eletrônico, campo vazio ou formato inesperado. None nunca exclui.
     """
-    if not intervalo:
+    limites = _limites(intervalo)
+    if limites is None or limites[1] <= limites[0]:
         return None
 
-    texto = str(intervalo).strip().replace("--", "-").replace("–", "-").replace("—", "-")
-    if not texto:
-        return None
-
-    partes = [parte.strip() for parte in texto.split("-") if parte.strip()]
-    numeros = [parte for parte in partes if parte.isdigit()]
-    if len(numeros) != 2 or len(partes) != 2:
-        return None
-
-    inicio, fim = int(numeros[0]), int(numeros[1])
-    if fim < inicio:
-        return None
-
+    inicio, fim = limites
     return fim - inicio + 1
-
-
-def sinal_de_paginas(intervalo: str | None) -> Sinal | None:
-    """Aponta suspeita de short-paper a partir do metadado, sem decidir.
-
-    O metadado erra e nem sempre existe, e a contagem de verdade sai do arquivo aberto pelo DOI.
-    Só vira sinal quando o intervalo é legível e curto: campo ausente não diz nada e viraria ruído.
-    """
-    paginas = contar_paginas(intervalo)
-    if paginas is None or paginas >= MINIMO_DE_PAGINAS:
-        return None
-
-    return Sinal(CRITERIO_SHORT_PAPER, f"metadado indica {paginas} páginas")
 
 
 def sinal_de_idioma(titulo: str, resumo: str = "") -> Sinal | None:
@@ -160,19 +182,14 @@ def sinal_de_idioma_declarado(idioma: str) -> Sinal | None:
     return Sinal(CRITERIO_IDIOMA, f"registro declara idioma {declarado}")
 
 
-def levantar_notas_da_etapa_2(
-    titulo: str,
-    resumo: str,
-    paginas: str | None,
-    idioma_declarado: str = "",
-) -> list[Sinal]:
-    """O que a automação já sabe e não decide agora: idioma e contagem de páginas.
+def levantar_notas_da_etapa_2(titulo: str, resumo: str, idioma_declarado: str = "") -> list[Sinal]:
+    """O que a automação já sabe e não decide agora: o idioma.
 
     Vai junto na planilha, em coluna própria, para poupar a conferência quando o estudo chegar na
     ETAPA 2 com o PDF aberto. O idioma declarado tem precedência sobre a detecção.
     """
     idioma = sinal_de_idioma_declarado(idioma_declarado) or sinal_de_idioma(titulo, resumo)
-    return [nota for nota in (idioma, sinal_de_paginas(paginas)) if nota]
+    return [idioma] if idioma else []
 
 
 def triar(
@@ -183,15 +200,21 @@ def triar(
     revisao: Revisao,
     idioma_declarado: str = "",
 ) -> Decisao:
-    """Aplica a ETAPA 1 a um estudo: a string decide, as notas vão junto."""
+    """Aplica a ETAPA 1 a um estudo: páginas primeiro, depois a string; as notas vão junto."""
     resultado = revisao.string.avaliar(titulo, resumo, palavras_chave)
-    notas = levantar_notas_da_etapa_2(titulo, resumo, paginas, idioma_declarado)
+    notas = levantar_notas_da_etapa_2(titulo, resumo, idioma_declarado)
+
+    if revisao.minimo_de_paginas:
+        contagem = contar_paginas(paginas)
+        if contagem is not None and contagem < revisao.minimo_de_paginas:
+            evidencia = f"{contagem} páginas pelo metadado | {resultado.evidencia}"
+            return Decisao(desfecho=SHORT_PAPER, evidencia=evidencia, notas=notas)
 
     if resultado.atende:
-        acao = ACEITAR
+        desfecho = ATENDE
     elif (resumo or "").strip():
-        acao = REJEITAR
+        desfecho = NAO_ATENDE
     else:
-        acao = MANUAL
+        desfecho = MANUAL
 
-    return Decisao(acao=acao, evidencia=resultado.evidencia, notas=notas)
+    return Decisao(desfecho=desfecho, evidencia=resultado.evidencia, notas=notas)

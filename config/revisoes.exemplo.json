@@ -3,7 +3,9 @@
     "nome": "Aprendizado federado em dispositivos de borda",
     "string": "(\"federated learning\" OR \"federated training\" OR \"federated averaging\" OR FedAvg) AND (\"edge device\" OR \"edge computing\" OR \"internet of things\" OR IoT)",
     "criterio_de_aceite": "ETAPA 1 - Atende à string de busca em título, resumo ou palavras-chave",
-    "criterio_de_rejeicao": "ETAPA 1 - Não atende à string de busca em título, resumo ou palavras-chave"
+    "criterio_de_rejeicao": "ETAPA 1 - Não atende à string de busca em título, resumo ou palavras-chave",
+    "minimo_de_paginas": 4,
+    "criterio_de_short_paper": "ETAPA 1 - Short-paper, com menos de 4 páginas"
   },
   "B": {
     "nome": "Aprendizado federado em saúde",

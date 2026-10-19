@@ -9,20 +9,22 @@ prefixo (`ETAPA 1 - ...`, `ETAPA 2 - ...`):
 
 | Etapa | O que se lê | Quem decide | Critérios |
 |---|---|---|---|
-| ETAPA 1 | título, palavras-chave e resumo | a string de busca, com conferência sua | só os dois da string: atende e não atende |
-| ETAPA 2 | introdução e resumo | você, à mão | todo critério de conteúdo: tema, tipo de estudo, preprint, idioma, páginas... |
+| ETAPA 1 | título, palavras-chave, resumo e o número de páginas do metadado | a string de busca e o mínimo de páginas, com conferência sua | os dois da string e, se a revisão quiser, o de short-paper |
+| ETAPA 2 | introdução e resumo | você, à mão | todo critério de conteúdo: tema, tipo de estudo, preprint, idioma... |
 | ETAPA 3 | texto completo | você, à mão | o que só se decide com o artigo inteiro aberto |
 
-Como a ETAPA 1 é a string, ela tem **só dois critérios**:
+A ETAPA 1 tem só os critérios que se decidem sem julgamento, pelo registro:
 
 ```
 ETAPA 1 - Atende à string de busca em título, resumo ou palavras-chave      (inclusão)
 ETAPA 1 - Não atende à string de busca em título, resumo ou palavras-chave  (exclusão)
+ETAPA 1 - Short-paper, com menos de 4 páginas                               (exclusão, opcional)
 ```
 
 Qualquer outro critério pede leitura e julgamento (o estudo trata do tema? é secundário? é
 preprint?) e por isso mora na ETAPA 2 ou 3, mesmo que se possa decidir lendo só o resumo. Assim cada
-estudo excluído na ETAPA 1 saiu pela string, e só por ela, o que é fácil de descrever no método.
+estudo excluído na ETAPA 1 saiu pela string ou pelo número de páginas, o que é fácil de descrever no
+método. O texto e o limite do short-paper são seus: o exemplo usa 4 páginas.
 
 A ferramenta só atua na ETAPA 1. Ela lê os estudos importados na revisão, verifica se cada um atende
 à string de busca nos mesmos três campos em que a busca rodou nas bases, entrega uma planilha com a
@@ -34,7 +36,7 @@ critério anexado. É o mesmo que você faria abrindo artigo por artigo e clican
 - **Python 3.13.** É a versão em que o projeto foi desenvolvido e em que os testes passam.
 - Uma conta no Parsifal com acesso à revisão a triar: dona da revisão ou colaboradora dela.
 - Os estudos já importados na revisão (aba *Conducting > Import Studies* do Parsifal).
-- Os dois critérios de ETAPA 1 cadastrados no Parsifal (*Planning > Selection Criteria*), com o
+- Os critérios de ETAPA 1 cadastrados no Parsifal (*Planning > Selection Criteria*), com o
   texto exato que está no config, para a automação anexar às decisões dela. Cadastre **antes** de
   aplicar qualquer decisão: ver [Cuidados com os critérios](#cuidados-com-os-critérios).
 
@@ -97,7 +99,9 @@ aprendizado federado em dispositivos de borda:
   "nome": "Aprendizado federado em dispositivos de borda",
   "string": "(\"federated learning\" OR FedAvg) AND (\"edge device\" OR IoT)",
   "criterio_de_aceite": "ETAPA 1 - Atende à string de busca em título, resumo ou palavras-chave",
-  "criterio_de_rejeicao": "ETAPA 1 - Não atende à string de busca em título, resumo ou palavras-chave"
+  "criterio_de_rejeicao": "ETAPA 1 - Não atende à string de busca em título, resumo ou palavras-chave",
+  "minimo_de_paginas": 4,
+  "criterio_de_short_paper": "ETAPA 1 - Short-paper, com menos de 4 páginas"
 }
 ```
 
@@ -106,9 +110,12 @@ aprendizado federado em dispositivos de borda:
 | `nome` | só para exibição |
 | `string` | a string de busca, exatamente como foi colada nas bases. No JSON, as aspas internas levam `\` antes |
 | `criterio_de_aceite` | critério anexado quando a automação aceita. Texto exato de um critério de inclusão cadastrado no Parsifal |
-| `criterio_de_rejeicao` | critério anexado quando a automação rejeita. Texto exato de um critério de exclusão cadastrado no Parsifal |
+| `criterio_de_rejeicao` | critério anexado quando a automação rejeita por não atender à string. Texto exato de um critério de exclusão cadastrado no Parsifal |
+| `minimo_de_paginas` | opcional. Estudo com menos páginas que isso, pelo metadado, sai como short-paper |
+| `criterio_de_short_paper` | opcional, junto com o anterior. Critério de exclusão anexado ao short-paper |
 
-As três últimas chaves são obrigatórias. Se um critério não estiver cadastrado no Parsifal, o
+`string`, `criterio_de_aceite` e `criterio_de_rejeicao` são obrigatórias. As duas de short-paper vêm
+juntas ou não vêm: sem elas, o número de páginas não decide nada. Se um critério não estiver cadastrado no Parsifal, o
 `classificar` avisa, e o `aplicar` recusa a linha em vez de gravar sem critério.
 
 **A revisão é escolhida em dois lugares, e os dois precisam concordar:**
@@ -147,6 +154,9 @@ você quer.
 
 Detalhes de cada comando:
 
+- **`verificar`** mostra todos os critérios da revisão, mas guarda em `dados/criterios.json` só os de
+  ETAPA 1, que são os únicos que a automação usa. As outras etapas ficam no Parsifal. Rode de novo ao
+  trocar de revisão: o `classificar` confere os critérios do config contra esse arquivo.
 - **`baixar`** faz uma requisição por artigo e demora. A instância hospedada do Parsifal não tem
   export: resumo e palavras-chave só existem na tela de cada artigo. Só os artigos ainda
   `Unclassified` são baixados. Queda de conexão ou erro passageiro do servidor é repetido até cinco
@@ -173,15 +183,24 @@ Para trocar: edite `PARSIFAL_REVIEW_URL` no `.env`, rode `verificar` e use a sig
 
 ### A regra
 
-O estudo é avaliado pela string de busca da revisão, sobre **título, resumo e palavras-chave
-juntos**. É o mesmo que o `TITLE-ABS-KEY` do Scopus e o *Topic* do Web of Science fazem: cada termo
-pode estar em qualquer um dos três campos.
+Quando a revisão configura o short-paper, o número de páginas é olhado primeiro. Os demais estudos
+são avaliados pela string de busca, sobre **título, resumo e palavras-chave juntos**. É o mesmo que o
+`TITLE-ABS-KEY` do Scopus e o *Topic* do Web of Science fazem: cada termo pode estar em qualquer um
+dos três campos.
 
 | Situação | Decisão |
 |---|---|
+| menos páginas que o `minimo_de_paginas`, pelo metadado | `rejeitar`, com o `criterio_de_short_paper` |
 | atende à string | `aceitar`, com o `criterio_de_aceite` |
 | tem resumo e não atende à string | `rejeitar`, com o `criterio_de_rejeicao` |
 | não tem resumo e não atende à string | conferência manual: a linha sai em branco |
+
+**As páginas só decidem quando o número é confiável.** Elas são contadas pelo intervalo do campo
+`pages` (`123-127` são 5 páginas). Intervalo de página única não conta: o IEEE exporta `1-1` para
+artigo de periódico em *early access*, que ainda não tem paginação, e excluir esse artigo seria
+excluir um trabalho completo. Campo vazio, número de artigo eletrônico (`e12345`) e formato estranho
+também não contam. Nesses casos quem decide é a string, e o short-paper fica para a ETAPA 2, com o
+arquivo aberto.
 
 O caso sem resumo fica com você porque ali "não atende" mediria a lacuna do registro, e não o
 artigo. Antes de chegar nele, o `completar` tenta buscar o resumo fora do Parsifal.
@@ -224,17 +243,13 @@ estudo saiu.
 
 ## As notas para a ETAPA 2
 
-Idioma e contagem de páginas são calculados, mas **não entram na decisão da ETAPA 1**: os dois só
-se confirmam com o arquivo aberto. Vão na coluna `notas_etapa_2` para poupar conferência depois.
+O idioma é calculado, mas **não entra na decisão da ETAPA 1**: ele só se confirma com o arquivo
+aberto. Vai na coluna `notas_etapa_2` para poupar conferência depois.
 
-- **Idioma.** O campo `language` do registro vence a detecção pelo texto: um artigo em russo com
-  resumo em inglês seria detectado como inglês. Sem o campo, a detecção roda sobre título e resumo
-  e só vira nota quando afirma outro idioma com confiança alta.
-- **Páginas.** Contadas pelo intervalo do campo `pages` (`123-127` são 5 páginas). Vira nota quando
-  o intervalo é legível e tem menos de 5 páginas.
-
-Quando o metadado não permite afirmar nada (campo de páginas vazio, texto curto demais para detectar
-idioma), a automação fica calada em vez de encher a planilha de ruído.
+O campo `language` do registro vence a detecção pelo texto: um artigo em russo com resumo em inglês
+seria detectado como inglês. Sem o campo, a detecção roda sobre título e resumo e só vira nota quando
+afirma outro idioma com confiança alta. Texto curto demais não vira nota, em vez de encher a planilha
+de ruído.
 
 ## A planilha de trabalho
 
@@ -244,10 +259,10 @@ tela do Parsifal.
 | Coluna | O que é |
 |---|---|
 | **`acao`** | `aceitar` ou `rejeitar`, preenchida pela automação. Mude o que discordar. Vazio quer dizer "não aplicar" |
-| **`criterio`** | o critério que vai junto, também preenchido. A aba `criterios` da planilha tem a lista lida do Parsifal |
-| `automacao` | a decisão original da automação (`aceitar`, `rejeitar` ou `manual`), para comparar com a sua |
-| `evidencia` | os termos da string que casaram, grupo por grupo |
-| `notas_etapa_2` | idioma e páginas |
+| **`criterio`** | o critério que vai junto, também preenchido. A aba `criterios` da planilha tem os critérios de ETAPA 1 lidos do Parsifal |
+| `automacao` | a decisão original da automação (`aceitar`, `rejeitar`, `short-paper` ou `manual`), para comparar com a sua |
+| `evidencia` | os termos da string que casaram, grupo por grupo, e o número de páginas no caso de short-paper |
+| `notas_etapa_2` | idioma |
 
 **O que você muda é seu.** Rodar `classificar` de novo recalcula só as linhas em que `acao` e
 `criterio` continuam como a automação preencheu. Linha em que você mudou qualquer uma das duas fica

@@ -23,6 +23,9 @@ DECISOES = PASTA_DE_DADOS / "decisoes.xlsx"
 CRITERIOS = PASTA_DE_DADOS / "criterios.json"
 CONFIG_DE_REVISOES = RAIZ / "config" / "revisoes.json"
 
+# A automação só decide a ETAPA 1: os critérios das outras etapas ficam no Parsifal.
+PREFIXO_DA_ETAPA_1 = "ETAPA 1"
+
 COLUNAS_DO_ESTUDO = (
     "id",
     "bibtex_key",
@@ -77,7 +80,12 @@ def _avisar_criterio_fora_do_parsifal(revisao: regras.Revisao) -> None:
         return
 
     cadastrados = set(json.loads(CRITERIOS.read_text(encoding="utf-8")))
-    for criterio in (revisao.criterio_de_aceite, revisao.criterio_de_rejeicao):
+    configurados = (
+        revisao.criterio_de_aceite,
+        revisao.criterio_de_rejeicao,
+        revisao.criterio_de_short_paper,
+    )
+    for criterio in filter(None, configurados):
         if criterio not in cadastrados:
             print(f"aviso: critério não cadastrado no Parsifal, o `aplicar` vai recusar: {criterio}")
 
@@ -100,7 +108,8 @@ def comando_verificar(_argumentos) -> None:
 
     criterios = cliente.listar_criterios(artigos[0]["id"])
     PASTA_DE_DADOS.mkdir(parents=True, exist_ok=True)
-    CRITERIOS.write_text(json.dumps(sorted(criterios), ensure_ascii=False, indent=2), encoding="utf-8")
+    da_etapa_1 = sorted(texto for texto in criterios if texto.startswith(PREFIXO_DA_ETAPA_1))
+    CRITERIOS.write_text(json.dumps(da_etapa_1, ensure_ascii=False, indent=2), encoding="utf-8")
 
     por_etapa = Counter(texto.split(" - ")[0] for texto in criterios)
     print(f"\ncritérios de seleção: {len(criterios)}")
@@ -242,11 +251,11 @@ def comando_classificar(argumentos) -> None:
             revisao=revisao,
             idioma_declarado=estudo.idioma,
         )
-        acao, criterio = _preenchimento(decisao.acao, revisao)
+        acao, criterio = revisao.preenchimento(decisao.desfecho)
 
         anterior = anteriores.get(estudo.id)
         if anterior:
-            preenchido_antes = _preenchimento(anterior.get("automacao", ""), revisao)
+            preenchido_antes = revisao.preenchimento(anterior.get("automacao", ""))
             if planilha.foi_editada(anterior, preenchido_antes):
                 acao, criterio = anterior.get("acao", ""), anterior.get("criterio", "")
                 preservadas += 1
@@ -257,7 +266,7 @@ def comando_classificar(argumentos) -> None:
                 "acao": acao,
                 "criterio": criterio,
                 "titulo": estudo.titulo[:250],
-                "automacao": decisao.acao,
+                "automacao": decisao.desfecho,
                 "evidencia": decisao.evidencia,
                 "notas_etapa_2": decisao.notas_em_texto,
                 "doi": estudo.doi,
@@ -269,21 +278,20 @@ def comando_classificar(argumentos) -> None:
 
     contagem = Counter(linha["automacao"] for linha in linhas)
     print(f"revisão {argumentos.revisao} ({revisao.nome}), {len(linhas)} estudos")
-    print(f"  aceitar   {contagem[planilha.ACEITAR]:>5}  (atende à string)")
-    print(f"  rejeitar  {contagem[planilha.REJEITAR]:>5}  (tem resumo e não atende à string)")
-    print(f"  manual    {contagem[regras.MANUAL]:>5}  (sem resumo e não atende: confira à mão)")
+    print(f"  aceitar      {contagem[regras.ATENDE]:>5}  (atende à string)")
+    print(f"  rejeitar     {contagem[regras.NAO_ATENDE]:>5}  (tem resumo e não atende à string)")
+    if revisao.minimo_de_paginas:
+        print(
+            f"  short-paper  {contagem[regras.SHORT_PAPER]:>5}  "
+            f"(menos de {revisao.minimo_de_paginas} páginas pelo metadado: rejeitar)"
+        )
+    print(f"  manual       {contagem[regras.MANUAL]:>5}  (sem resumo e não atende: confira à mão)")
     if preservadas:
         print(f"\n  {preservadas} linhas com decisão sua, preservadas como estavam")
     _avisar_criterio_fora_do_parsifal(revisao)
 
     print(f"\n{DECISOES}")
     print("Confira as colunas 'acao' e 'criterio', mude o que discordar, salve e rode `aplicar`.")
-
-
-def _preenchimento(acao_da_automacao: str, revisao: regras.Revisao) -> tuple[str, str]:
-    """O que a automação escreve em `acao` e `criterio`. Conferência manual fica em branco."""
-    acao = "" if acao_da_automacao == regras.MANUAL else acao_da_automacao
-    return acao, revisao.criterio_de(acao_da_automacao)
 
 
 def comando_aplicar(argumentos) -> None:
